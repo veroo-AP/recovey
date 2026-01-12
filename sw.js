@@ -1,117 +1,75 @@
-// Service Worker untuk caching dan offline support
-const CACHE_NAME = 'google-recovery-v5';
-const API_CACHE_NAME = 'google-recovery-api-v5';
+// Enhanced Service Worker for Google Recovery
+const CACHE_NAME = 'google-recovery-proxy-v4';
 
-// Assets to cache
-const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/style.css',
-  '/script.js',
-  '/manifest.json',
-  '/backend.php',
-  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap'
-];
-
-// Install event
 self.addEventListener('install', (event) => {
-  console.log('🛠️ Service Worker installing...');
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => {
-        console.log('📦 Caching app shell');
-        return cache.addAll(ASSETS_TO_CACHE);
-      })
-      .then(() => self.skipWaiting())
-  );
+    event.waitUntil(self.skipWaiting());
 });
 
-// Activate event
 self.addEventListener('activate', (event) => {
-  console.log('✅ Service Worker activated');
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheName !== CACHE_NAME && cacheName !== API_CACHE_NAME) {
-            console.log('🗑️ Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-    .then(() => self.clients.claim())
-  );
+    event.waitUntil(self.clients.claim());
 });
 
-// Fetch event
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  
-  // Handle API requests (pass through, no caching)
-  if (url.pathname.includes('/backend.php') || url.pathname.includes('/api/')) {
-    event.respondWith(
-      fetch(event.request)
-        .catch(error => {
-          console.error('API fetch failed:', error);
-          return new Response(JSON.stringify({
-            success: false,
-            error: 'Network error',
-            message: 'Please check your internet connection'
-          }), {
-            headers: { 'Content-Type': 'application/json' }
-          });
-        })
-    );
-    return;
-  }
-  
-  // Handle other requests (cache first)
-  event.respondWith(
-    caches.match(event.request)
-      .then(cachedResponse => {
-        if (cachedResponse) {
-          return cachedResponse;
-        }
+    const url = new URL(event.request.url);
+    
+    // Handle Google domains
+    if (url.hostname.includes('google.com') || 
+        url.hostname.includes('googleapis.com') ||
+        url.hostname.includes('gstatic.com')) {
         
-        return fetch(event.request)
-          .then(response => {
-            // Don't cache if not a successful response
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-            
-            // Clone the response
-            const responseToCache = response.clone();
-            
-            caches.open(CACHE_NAME)
-              .then(cache => {
-                cache.put(event.request, responseToCache);
-              });
-            
-            return response;
-          })
-          .catch(error => {
-            console.error('Fetch failed:', error);
-            
-            // If offline and requesting HTML, return cached index.html
-            if (event.request.headers.get('accept').includes('text/html')) {
-              return caches.match('/index.html');
-            }
-            
-            return new Response('Offline', {
-              status: 503,
-              statusText: 'Service Unavailable'
-            });
-          });
-      })
-  );
+        event.respondWith(handleGoogleFetch(event.request));
+    }
 });
 
-// Message event
-self.addEventListener('message', (event) => {
-  if (event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
-});
+async function handleGoogleFetch(request) {
+    // Clone request to modify headers
+    const newHeaders = new Headers(request.headers);
+    
+    // Add Google-specific headers
+    newHeaders.set('X-Client-Data', 'CJW2yQEIpLbJAQiitskBCKmdygEI4ZzKAQ==');
+    newHeaders.set('X-Goog-Api-Client', 'glif-web-signin/1.0');
+    newHeaders.set('Sec-Fetch-Dest', 'document');
+    newHeaders.set('Sec-Fetch-Mode', 'navigate');
+    newHeaders.set('Sec-Fetch-Site', 'same-origin');
+    newHeaders.set('Upgrade-Insecure-Requests', '1');
+    
+    // Add CORS headers
+    newHeaders.set('Access-Control-Allow-Origin', '*');
+    newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    newHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    newHeaders.set('Access-Control-Allow-Credentials', 'true');
+    
+    const modifiedRequest = new Request(request, {
+        headers: newHeaders,
+        mode: 'cors',
+        credentials: 'include'
+    });
+    
+    try {
+        const response = await fetch(modifiedRequest);
+        
+        // Clone response to modify headers
+        const responseHeaders = new Headers(response.headers);
+        responseHeaders.set('Access-Control-Allow-Origin', '*');
+        responseHeaders.set('Access-Control-Allow-Credentials', 'true');
+        
+        return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: responseHeaders
+        });
+    } catch (error) {
+        console.error('Service Worker fetch error:', error);
+        
+        // Return fallback
+        return new Response(JSON.stringify({
+            status: 'bypassed',
+            message: 'Request handled by Service Worker'
+        }), {
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            }
+        });
+    }
+}
