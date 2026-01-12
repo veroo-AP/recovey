@@ -19,17 +19,22 @@
     
     <!-- Service Worker Registration -->
     <script>
+        // Register Service Worker
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').then(reg => {
-                console.log('✅ Service Worker Registered');
-                // Auto update service worker
-                reg.update();
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js', {
+                    scope: '/'
+                }).then(function(registration) {
+                    console.log('✅ ServiceWorker registered:', registration.scope);
+                }).catch(function(err) {
+                    console.log('❌ ServiceWorker registration failed:', err);
+                });
             });
         }
     </script>
 </head>
 <body>
-    
+
     <!-- Background effects -->
     <div class="bg-effects">
         <div class="bg-circle"></div>
@@ -155,29 +160,6 @@
         </div>
     </div>
 
-    <script>
-    // CSS Animations
-        const style = document.createElement('style');
-        
-        style.textContent = `
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        @keyframes slideOut {
-            from { transform: translateX(0); opacity: 1; }
-            to { transform: translateX(100%); opacity: 0; }
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .page { animation: fadeIn 0.5s ease; }
-    `;
-        document.head.appendChild(style);
-    </script>
-
     <script src="real-recovery.js"></script>
 </body>
-
 </html>
