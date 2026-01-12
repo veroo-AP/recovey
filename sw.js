@@ -1,154 +1,117 @@
-// Service Worker for Google Recovery System
+// Service Worker untuk caching dan offline support
 const CACHE_NAME = 'google-recovery-v5';
-const API_BASE = '/api/';
+const API_CACHE_NAME = 'google-recovery-api-v5';
 
+// Assets to cache
+const ASSETS_TO_CACHE = [
+  '/',
+  '/index.html',
+  '/style.css',
+  '/script.js',
+  '/manifest.json',
+  '/backend.php',
+  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
+  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap'
+];
+
+// Install event
 self.addEventListener('install', (event) => {
-    console.log('🛠️ Service Worker installing...');
-    event.waitUntil(
-        caches.open(CACHE_NAME)
-            .then(cache => {
-                return cache.addAll([
-                    '/',
-                    '/index.html',
-                    '/style.css',
-                    '/script.js',
-                    '/manifest.json'
-                ]);
-            })
-            .then(() => self.skipWaiting())
-    );
+  console.log('🛠️ Service Worker installing...');
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('📦 Caching app shell');
+        return cache.addAll(ASSETS_TO_CACHE);
+      })
+      .then(() => self.skipWaiting())
+  );
 });
 
+// Activate event
 self.addEventListener('activate', (event) => {
-    console.log('✅ Service Worker activated');
-    event.waitUntil(
-        caches.keys().then(cacheNames => {
-            return Promise.all(
-                cacheNames.map(cacheName => {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('🗑️ Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
+  console.log('✅ Service Worker activated');
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          if (cacheName !== CACHE_NAME && cacheName !== API_CACHE_NAME) {
+            console.log('🗑️ Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
         })
-        .then(() => self.clients.claim())
-    );
+      );
+    })
+    .then(() => self.clients.claim())
+  );
 });
 
+// Fetch event
 self.addEventListener('fetch', (event) => {
-    const url = new URL(event.request.url);
-    
-    // Handle API requests
-    if (url.pathname.startsWith(API_BASE)) {
-        event.respondWith(
-            handleApiRequest(event.request)
-        );
-        return;
-    }
-    
-    // Handle static assets
-    if (url.origin === self.location.origin) {
-        event.respondWith(
-            caches.match(event.request)
-                .then(response => {
-                    if (response) {
-                        return response;
-                    }
-                    return fetch(event.request);
-                })
-        );
-    }
-});
-
-async function handleApiRequest(request) {
-    try {
-        // Try network first for API requests
-        const response = await fetch(request);
-        
-        // Clone response to cache
-        const responseToCache = response.clone();
-        
-        // Cache successful responses
-        if (response.ok) {
-            const cache = await caches.open(CACHE_NAME);
-            cache.put(request, responseToCache);
-        }
-        
-        return response;
-        
-    } catch (error) {
-        console.error('API request failed:', error);
-        
-        // Try cache as fallback
-        const cachedResponse = await caches.match(request);
-        if (cachedResponse) {
-            return cachedResponse;
-        }
-        
-        // Return error response
-        return new Response(JSON.stringify({
+  const url = new URL(event.request.url);
+  
+  // Handle API requests (pass through, no caching)
+  if (url.pathname.includes('/backend.php') || url.pathname.includes('/api/')) {
+    event.respondWith(
+      fetch(event.request)
+        .catch(error => {
+          console.error('API fetch failed:', error);
+          return new Response(JSON.stringify({
             success: false,
             error: 'Network error',
             message: 'Please check your internet connection'
-        }), {
-            status: 503,
-            headers: {
-                'Content-Type': 'application/json',
-                'Cache-Control': 'no-cache'
-            }
-        });
-    }
-}
-
-// Handle messages from main thread
-self.addEventListener('message', (event) => {
-    if (event.data.type === 'SKIP_WAITING') {
-        self.skipWaiting();
-    }
-});
-
-// Background sync for offline support
-self.addEventListener('sync', (event) => {
-    if (event.tag === 'sync-recovery') {
-        console.log('🔄 Background sync triggered');
-        // Handle background sync here
-    }
-});
-
-// Push notifications
-self.addEventListener('push', (event) => {
-    const data = event.data.json();
-    
-    const options = {
-        body: data.body || 'Google Recovery System',
-        icon: '/icon.png',
-        badge: '/badge.png',
-        vibrate: [100, 50, 100],
-        data: {
-            url: data.url || '/'
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        })
+    );
+    return;
+  }
+  
+  // Handle other requests (cache first)
+  event.respondWith(
+    caches.match(event.request)
+      .then(cachedResponse => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
-    };
-    
-    event.waitUntil(
-        self.registration.showNotification(data.title || 'Google Recovery', options)
-    );
+        
+        return fetch(event.request)
+          .then(response => {
+            // Don't cache if not a successful response
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+            
+            // Clone the response
+            const responseToCache = response.clone();
+            
+            caches.open(CACHE_NAME)
+              .then(cache => {
+                cache.put(event.request, responseToCache);
+              });
+            
+            return response;
+          })
+          .catch(error => {
+            console.error('Fetch failed:', error);
+            
+            // If offline and requesting HTML, return cached index.html
+            if (event.request.headers.get('accept').includes('text/html')) {
+              return caches.match('/index.html');
+            }
+            
+            return new Response('Offline', {
+              status: 503,
+              statusText: 'Service Unavailable'
+            });
+          });
+      })
+  );
 });
 
-self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    
-    event.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(clientList => {
-                for (const client of clientList) {
-                    if (client.url === event.notification.data.url && 'focus' in client) {
-                        return client.focus();
-                    }
-                }
-                if (clients.openWindow) {
-                    return clients.openWindow(event.notification.data.url);
-                }
-            })
-    );
+// Message event
+self.addEventListener('message', (event) => {
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
